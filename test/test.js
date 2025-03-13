@@ -1,10 +1,10 @@
 "use strict";
 
-const http = require("http");
 const Tracker = require("../");
-const fs = require("fs");
-
 const fibos = require("chain");
+const path = require("path");
+const fs = require("fs");
+const db = require("db")
 
 const config = {
 	"config_dir": "./blockData/data",
@@ -16,7 +16,10 @@ const config = {
 		'127.0.0.1:9804',
 		'127.0.0.1:9805'
 	],
-	"DBconnString": "mysql://root:123456@127.0.0.1/fibos_mainnet"
+	"DBconnString": "mysql://root:123456@127.0.0.1/fibos_mainnet",
+	"LevelDB_path": "./myleveldb.db",
+	"handler_counts": 200,
+	"StartIndexFile": path.resolve(__dirname, 'startIndex.json')
 };
 
 fibos.pubkey_prefix = "FO";
@@ -56,11 +59,36 @@ fibos.load("producer", {
 
 fibos.load("chain", chain_config);
 fibos.load("chain_api");
-fibos.load("emitter");
 
+/////////////////////////////////////// tracker ///////////////////////////////////////
+function readStartIndex(file_path) {
+    try {
+        const data = fs.readFileSync(file_path, 'utf8');
+        const jsonData = JSON.parse(data);
+        return jsonData.startIndex || 1;
+    } catch (error) {
+        console.error('Error reading JSON file:', error);
+        return 1;
+    }
+}
 
-Tracker.Config.DBconnString = config.DBconnString;
-const tracker = new Tracker();
-tracker.emitter(fibos);
+const LevelDB = db.openLevelDB(config.LevelDB_path);
+
+Tracker.Tracker.Config.StartIndexFile = config.StartIndexFile;
+Tracker.Tracker.Config.DBconnString = config.DBconnString;
+Tracker.Tracker.Config.LevelDB = LevelDB;
+
+const levelDBStartIndex = readStartIndex(config.StartIndexFile);
+const tracker = new Tracker.Tracker();
+
+fibos.on('close', () => {
+    tracker.stop();
+});
+
+// write blockchain data to leveldb
+Tracker.QueueEmitter(LevelDB);
+// read leveldb data to database
+tracker.emitter(levelDBStartIndex, config.handler_counts);
+/////////////////////////////////////// tracker ///////////////////////////////////////
 
 fibos.start();
